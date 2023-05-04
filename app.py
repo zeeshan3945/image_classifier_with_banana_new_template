@@ -1,15 +1,30 @@
 from potassium import Potassium, Request, Response
 
-from transformers import pipeline
 import torch
+from torchvision import transforms, models
+from PIL import Image
+import base64
+from io import BytesIO
+
+
+device = "cuda:0" if torch.cuda.is_available() else "cpu"
+
+tr = transforms.Compose([
+    transforms.Resize(256),
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+    transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225])
+    ])
 
 app = Potassium("my_app")
 
 # @app.init runs at startup, and loads models into the app's context
 @app.init
 def init():
-    device = 0 if torch.cuda.is_available() else -1
-    model = pipeline('fill-mask', model='bert-base-uncased', device=device)
+    model = models.vgg16(pretrained=True).to(device)
+    model.eval()
    
     context = {
         "model": model
@@ -22,10 +37,20 @@ def init():
 def handler(context: dict, request: Request) -> Response:
     prompt = request.json.get("prompt")
     model = context.get("model")
-    outputs = model(prompt)
+
+    image_binary = base64.decodebytes(prompt.encode('utf-8'))
+    PIL_image = Image.open(BytesIO(image_binary))
+    img_tensor = tr(PIL_image.convert("RGB")).unsqueeze(0).to(device)
+
+    # Pass the image through the model
+    output = model(img_tensor)
+
+    # Get the predicted class index
+    _, predicted = torch.max(output.data, 1)
 
     return Response(
-        json = {"outputs": outputs[0]}, 
+        json = {"outputs": predicted.item(),
+                "Availabble Device": device}, 
         status=200
     )
 
